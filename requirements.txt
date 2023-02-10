@@ -1,0 +1,10 @@
+streamlit
+streamlit-folium
+pyngrok
+folium
+
+mxnet
+gluonnlp tqdm
+sentencepiece
+transformers
+git+https://git@github.com/SKTBrain/KoBERT.git@master
