@@ -3,7 +3,7 @@ streamlit-folium
 pyngrok
 folium
 mxnet
-gluonnlp tqdm
+gluonnlp tqdm==23.0
 sentencepiece
 transformers
 git+https://git@github.com/SKTBrain/KoBERT.git@master
