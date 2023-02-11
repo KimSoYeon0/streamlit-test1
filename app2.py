@@ -7,7 +7,6 @@ import requests
 import folium
 from folium.plugins import MiniMap
 from streamlit_folium import st_folium
-import time 
 
 # torch
 import torch
@@ -32,22 +31,28 @@ st.set_page_config(
  layout="wide",
  page_title='오늘 이거 먹어')
 
+# 배경화면 설정
+def add_bg_from_url():
+    st.markdown(
+         f"""
+         <style>
+         .stApp {{
+             background-image: url("https://i.pinimg.com/564x/30/ed/e7/30ede74766f91c06e51f920b40a4cafb.jpg");
+             background-attachment: fixed;
+             background-size: cover
+         }}
+         </style>
+         """,
+         unsafe_allow_html=True
+     )
 
-# # 방법 1 progress bar 
-# latest_iteration = st.empty()
-# bar = st.progress(0)
-
-# for i in range(100):
-#   # Update the progress bar with each iteration.
-#   latest_iteration.text(f'Iteration {i+1}')
-#   bar.progress(i + 1)
-#   time.sleep(0.05)
-#   # 0.05 초 마다 1씩증가
+add_bg_from_url()
 
 #######################################################################################################
 #### 모델 불러오기 ####
 
-device = torch.device("cuda:0")
+# device = torch.device("cuda:0") #GPU사용
+device = torch.device("cpu")  #CPU사용
 
 bertmodel, vocab = get_pytorch_kobert_model()
 
@@ -71,7 +76,7 @@ class BERTDataset(Dataset):
 max_len = 64
 batch_size = 64
 warmup_ratio = 0.1
-num_epochs = 1
+num_epochs = 20
 max_grad_norm = 1
 log_interval = 200
 learning_rate =  5e-5
@@ -138,14 +143,17 @@ def testModel(model, seq):
 
     modelload.eval()
     result = modelload(torch.tensor([tokenized[0]]).to(device), [tokenized[1]], torch.tensor(tokenized[2]).to(device)) 
-    idx = result.argmax().cpu().item() 
-    result2 = F.softmax(result, dim=1).sort()
-    return cate[idx], softmax(result,idx) 
+    idx = result.argmax().cpu().item() #출력의 최대값이 나오게함
+    result2 = F.softmax(result, dim=1).sort() #각 값에 대한 softmax함수 적용
+
+    #return cate[idx], softmax(result,idx)
+    return cate[result2[1][0][-1]],round((result2[0][0][-1]).item(), 4)*100, cate[result2[1][0][-2]],round((result2[0][0][-2]).item(), 4)*100, cate[result2[1][0][-3]],round((result2[0][0][-3]).item(), 4)*100
 
 # 모델을 불러와서 한번만 로드하고 캐시에 저장하기
 @st.cache_resource
 def cache_model(path, modelname):
-    modelload = torch.load("/content/drive/MyDrive/final project/model/model6.pt") # gpu사용시
+    modelload = torch.load("/content/drive/MyDrive/final project/model/model6.pt", map_location=torch.device('cpu')) # cpu사용시
+    # modelload = torch.load("/content/drive/MyDrive/final project/model/model6.pt") # gpu사용시
     modelload.eval()
     return modelload
 
@@ -155,11 +163,10 @@ modelload = cache_model('/content/drive/MyDrive/final project/model/','model6.pt
 @st.cache_resource
 def elec_location(region,page_num):
     url = 'https://dapi.kakao.com/v2/local/search/keyword.json'
-    params = {'query': region,'page': page_num}
+    params = {'query': region,'page': page_num, 'sort' : 'popularity'}
     headers = {"Authorization": "KakaoAK 6dd31dbd3f7b90aed3f5591fdde29527"}
 
     places = requests.get(url, params=params, headers=headers).json()['documents']
-    total = requests.get(url, params=params, headers=headers).json()['meta']['total_count']
 
     return places
 
@@ -168,6 +175,7 @@ def elec_info(places):
     Y = []
     stores = []
     road_address = []
+    phone = []
     place_url = []
     ID = []
     for place in places:
@@ -175,11 +183,12 @@ def elec_info(places):
         Y.append(float(place['y']))
         stores.append(place['place_name'])
         road_address.append(place['road_address_name'])
+        phone.append(place['phone'])
         place_url.append(place['place_url'])
         ID.append(place['id'])
 
-    ar = np.array([ID,stores, X, Y, road_address,place_url]).T
-    df = pd.DataFrame(ar, columns = ['ID','stores', 'X', 'Y','road_address','place_url'])
+    ar = np.array([ID,stores, X, Y, road_address, phone, place_url]).T
+    df = pd.DataFrame(ar, columns = ['ID','stores', 'X', 'Y','road_address','phone','place_url'])
     return df
 
 def keywords(location_name):
@@ -206,13 +215,13 @@ def make_map(dfs, m):
     for i in range(len(dfs)):
         folium.Marker([dfs['Y'][i],dfs['X'][i]],
                       tooltip=dfs['stores'][i],
-                      popup = '<iframe width="1000" height="400" src="' + df['place_url'][i] + '"title="YouTube video player" frameborder="0" allow="accelerometer; autoplay;  clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>',
+                      popup = '<iframe width="800" height="400" src="' + df['place_url'][i] + '"title="YouTube video player" frameborder="0" allow="accelerometer; autoplay;  clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>',
                       ).add_to(m)
     return m
 
 #######################################################################################################
 
-st.sidebar.header('Side Menu')
+# st.sidebar.header('Side Menu')
 tab1, tab2 = st.tabs(['search', 'map'])
 
 # user 입력값 저장
@@ -222,43 +231,51 @@ if 'user_input' not in st.session_state:
 if 'user_location_input' not in st.session_state:
     st.session_state['user_location_input'] = ''
 
-with st.sidebar:
-        when = st.selectbox('식사 시간은 언제인가요?', ['아침', '점심', '저녁'])
-        #location = st.text_input('지금 계신 지역은 어디인가요?', value = '', placeholder = '근처 지하철 역을 입력해주세요', key='user_location_input')
+# with st.sidebar:
+#         when = st.selectbox('식사 시간은 언제인가요?', ['아침', '점심', '저녁'])
+#         location = st.text_input('지금 계신 지역은 어디인가요?', value = '', placeholder = '근처 지하철 역을 입력해주세요', key='user_location_input')
 
 with tab1:
-    st.subheader('오늘도 무엇을 먹을지 고민하고 계신가요?')
+    st.subheader('💭오늘도 무엇을 먹을지 고민하고 계신가요?')
 
-    value = st.text_input('지금 생각나는 키워드를 입력하고 Enter를 눌러주세요!', placeholder = 'Ex) 육즙이 팡팡 터지는 고소한 음식이 먹고싶어.', key='user_input')
-    test, val = testModel(model ,st.session_state.user_input)
+    value = st.text_area('지금 생각나는 키워드를 입력하고 Ctrl+Enter를 눌러주세요!', placeholder = 'Ex) 육즙이 팡팡 터지는 고소한 음식이 먹고싶어.', key='user_input')
+    cat1,val1, cat2,val2, cat3,val3 = testModel(model ,st.session_state.user_input)
 
     if value:
-       st.header(test, '이 음식은 어떠신가요?')
+       st.header(cat1, '이 음식은 어떠신가요?')
 
-       st.write(test, '추천드립니다.', '신뢰도는', round(val, 2), '% 입니다.')
+       st.subheader(f"{cat1}이(가) 가장 적합한 음식입니다. 신뢰도는 {round(val1, 2)}% 입니다.")
+       #st.write(cat1, '이(가) 가장 적합한 음식입니다.', '신뢰도는', round(val1, 2), '% 입니다.')
+
+       st.write('입력문장과 가장 일치하는 음식 TOP3 입니다.')
+       st.write('🥇',cat1, '신뢰도는', round(val1, 2),'% 입니다.')
+       st.write('🥈',cat2, '신뢰도는', round(val2, 2),'% 입니다.')
+       st.write('🥉',cat3, '신뢰도는', round(val3, 2),'% 입니다.')
+
 
 with tab2:
-    st.header('여기는 지도가 나올겁니다.')
-    location = st.text_input('지금 계신 지역은 어디인가요?', value = '', placeholder = '근처 지하철 역을 입력해주세요', key='user_location_input')
+    st.subheader('🚇가시려는 지역이 어디인가요?')
+    location = st.text_input('지하철역을 기반으로 음식점을 추천해드립니다.', value = '', placeholder = '근처 지하철 역을 입력해주세요. ex) 강남역', key='user_location_input')
     user_location = st.session_state.user_location_input
 
     if location:
-        kakao_location = [user_location + ' ' + test]
-        df = keywords(kakao_location)
-
-        lat = 0
-        lon = 0
-
-        for i in df['Y']:
-            lat += float(i)
-        for j in df['X']:
-            lon += float(j)
-
-        lat = lat/len(df['Y'])
-        lon = lon/len(df['X'])
-
-        m = folium.Map(kakao_location=[lat, lon],   # 기준좌표: current_location
-                      zoom_start=5)
-        make_map = make_map(df, m)
-
-        st_folium(make_map, width = 1000, height = 500, zoom=16, center = [lat, lon])
+        kakao_location = [user_location + ' ' + cat1]
+        try:
+          df = keywords(kakao_location)
+          lat = 0
+          lon = 0
+          for i in df['Y']:
+              lat += float(i)
+          for j in df['X']:
+              lon += float(j)
+          lat = lat/len(df['Y'])
+          lon = lon/len(df['X'])
+          m = folium.Map(kakao_location=[lat, lon],   # 기준좌표: current_location
+                        zoom_start=16)
+          make_map = make_map(df, m)
+          st_folium(make_map, width = 1000, height = 500, zoom=16, center = [lat, lon])
+          df = df.drop(columns = ['ID', 'X', 'Y'])
+          st.dataframe(df)
+          st.write('결과는 인기도순으로 반영되었습니다.')
+        except:
+          st.write('아쉽게도 ' + user_location + ' 근처에는 ' + cat1 + ' 가게가 없습니다ㅠㅠ')
